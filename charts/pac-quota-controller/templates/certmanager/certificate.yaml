@@ -1,0 +1,31 @@
+{{- if .Values.certmanager.enable }}
+# Self-signed Issuer
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+  name: selfsigned-issuer
+  namespace: {{ .Release.Namespace }}
+spec:
+  selfSigned: {}
+---
+# Certificate for the webhook
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+  name: webhook-server-cert
+  namespace: {{ .Release.Namespace }}
+spec:
+  dnsNames:
+    - pac-quota-controller-service.{{ .Release.Namespace }}.svc
+    - pac-quota-controller-service.{{ .Release.Namespace }}.svc.cluster.local
+    - pac-quota-controller-manager.{{ .Release.Namespace }}.svc
+    - pac-quota-controller-manager.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: selfsigned-issuer
+  secretName: webhook-server-cert
+{{- end }}

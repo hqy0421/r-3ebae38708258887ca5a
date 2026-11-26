@@ -1,0 +1,49 @@
+name: Test Chart
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  test-e2e:
+    name: Run on Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install the latest version of kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Verify kind installation
+        run: kind version
+
+      - name: Create kind cluster
+        run: kind create cluster --image kindest/node:v1.34.0@sha256:7416a61b42b1662ca6ca89f02028ac133a309a2a30ba309614e8ec94d976dc5a
+
+      - name: Prepare pac-quota-controller
+        run: |
+          go mod tidy
+          make docker-build IMG=pac-quota-controller:v0.1.0
+          kind load docker-image pac-quota-controller:v0.1.0
+
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Verify Helm installation
+        run: helm version
+
+      - name: Lint Helm Chart
+        run: |
+          helm lint ./charts/pac-quota-controller
+      # TODO: Improve Helm chart testing

@@ -1,0 +1,37 @@
+name: Pre-commit Checks
+
+on:
+  pull_request:
+    paths:
+      - '**.go'
+      - 'Makefile'
+      - '.pre-commit-config.yaml'
+      - 'ct.yaml'
+      - '**.md'
+      - '**.yaml'
+      - '**.yml'
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.4'
+          check-latest: true
+      - name: Install dependencies
+        run: make deps
+      - name: Run fmt
+        run: make fmt
+      - name: Run vet
+        run: make vet
+      - name: Run make manifests
+        run: make manifests
+      - name: Run make helm-docs
+        run: make helm-docs
+      - name: Check for uncommitted changes (codegen, manifests, lint)
+        run: |
+          git diff --exit-code || (echo 'ERROR: Uncommitted changes after codegen/lint. Please run make manifests, make lint and commit the results.' && exit 1)

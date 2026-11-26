@@ -1,0 +1,79 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'Dockerfile'
+      - 'Makefile'
+  push:
+    branches: [ main ]
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'Dockerfile'
+      - 'Makefile'
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KIND_CLUSTER: pac-quota-controller-test-e2e
+      IMG: ghcr.io/powerhome/pac-quota-controller:e2e
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.4'
+
+      - name: Install the latest version of kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Verify kind installation
+        run: kind version
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Run e2e tests
+        run: |
+          make test-e2e
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "Dumping cluster state after potential e2e test failure..."
+          kubectl get all -n pac-quota-controller-system
+          kubectl describe pods -n pac-quota-controller-system
+          kubectl logs -l control-plane=controller-manager -n pac-quota-controller-system --tail=100 || true
+          echo "Dumping cert-manager state..."
+          kubectl get all -n cert-manager
+          kubectl describe pods -n cert-manager
+          kubectl logs -l app=cert-manager -n cert-manager --tail=100 || true
+          kubectl logs -l app.kubernetes.io/instance=cert-manager -n cert-manager --tail=100 || true
+          echo "Describing CRDs..."
+          kubectl get crds
+          kubectl describe crd clusterresourcequotas.quota.powerapp.cloud
+          echo "Describing MutatingWebhookConfigurations..."
+          kubectl get mutatingwebhookconfigurations -oyaml
+          echo "Describing ValidatingWebhookConfigurations..."
+          kubectl get validatingwebhookconfigurations -oyaml

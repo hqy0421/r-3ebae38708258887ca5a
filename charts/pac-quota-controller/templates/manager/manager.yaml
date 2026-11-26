@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pac-quota-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+    control-plane: controller-manager
+spec:
+  replicas:  {{ .Values.controllerManager.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
+  selector:
+    matchLabels:
+      {{- include "chart.selectorLabels" . | nindent 6 }}
+      control-plane: controller-manager
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        {{- include "chart.labels" . | nindent 8 }}
+        control-plane: controller-manager
+        {{- with .Values.controllerManager.pod }}
+        {{- with .labels }}
+        {{- range $key, $value := . }}
+        {{ $key }}: {{ $value }}
+        {{- end }}
+        {{- end }}
+        {{- end }}
+    spec:
+      {{- if .Values.controllerManager.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.controllerManager.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: manager
+          args:
+            {{- range .Values.controllerManager.container.args }}
+            - {{ . }}
+            {{- end }}
+            {{- if .Values.controllerManager.excludeNamespaceLabelKey }}
+            - --exclude-namespace-label-key={{ .Values.controllerManager.excludeNamespaceLabelKey }}
+            {{- end }}
+            - --excluded-namespaces={{ include "pacQuota.excludedNamespacesString" . | quote }}
+            {{- if .Values.webhook.dryRunOnly }}
+            - --webhook-dry-run-only=true
+            {{- end }}
+            - --webhook-cert-path={{ .Values.controllerManager.container.webhookCertPath }}
+          ports:
+          - containerPort: 9443
+            name: webhook-server
+            protocol: TCP
+          {{- if .Values.metrics.enable }}
+          - containerPort: 8080
+            name: metrics-server
+            protocol: TCP
+          {{- end }}
+          command:
+            - /manager
+          image: {{ .Values.controllerManager.container.image.repository }}:{{ .Values.controllerManager.container.image.tag }}
+          imagePullPolicy: {{ .Values.controllerManager.container.image.pullPolicy | default "IfNotPresent" }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          {{- if .Values.events.enable }}
+            - name: EVENTS_ENABLE
+              value: "true"
+            - name: EVENTS_CONFIG_PATH
+              value: "/etc/pac-quota-controller/events/event-config.yaml"
+            - name: EVENTS_TTL
+              value: {{ .Values.events.cleanup.ttl | quote }}
+            - name: EVENTS_MAX_EVENTS_PER_CRQ
+              value: {{ .Values.events.cleanup.maxEventsPerCRQ | quote }}
+            - name: EVENTS_CLEANUP_INTERVAL
+              value: {{ .Values.events.cleanup.interval | quote }}
+          {{- else }}
+            - name: EVENTS_ENABLE
+              value: "false"
+          {{- end }}
+          {{- if .Values.controllerManager.container.env }}
+            {{- range $key, $value := .Values.controllerManager.container.env }}
+            - name: {{ $key }}
+              value: {{ $value }}
+            {{- end }}
+          {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.controllerManager.container.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.controllerManager.container.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.controllerManager.container.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.controllerManager.container.securityContext | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.webhook.enable }}
+            - name: webhook-certs
+              mountPath: {{ .Values.controllerManager.container.webhookCertPath | default "/tmp/k8s-webhook-server/serving-certs" }}
+              readOnly: true
+            {{- end }}
+            {{- if .Values.events.enable }}
+            - name: event-config
+              mountPath: /etc/pac-quota-controller/events
+              readOnly: true
+            {{- end }}
+      securityContext:
+        {{- toYaml .Values.controllerManager.securityContext | nindent 8 }}
+      serviceAccountName: {{ .Values.controllerManager.serviceAccount.name }}
+      terminationGracePeriodSeconds: {{ .Values.controllerManager.terminationGracePeriodSeconds }}
+      volumes:
+        {{- if .Values.webhook.enable }}
+        {{- if .Values.certmanager.enable }}
+        - name: webhook-certs
+          secret:
+            secretName: webhook-server-cert
+        {{- else if  .Values.webhook.customTLS.secretName }}
+        - name: webhook-certs
+          secret:
+            secretName: {{ .Values.webhook.customTLS.secretName }}
+        {{- end }}
+        {{- end }}
+        {{- if .Values.events.enable }}
+        - name: event-config
+          configMap:
+            name: pac-quota-controller-event-config
+        {{- end }}

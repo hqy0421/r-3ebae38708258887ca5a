@@ -1,0 +1,163 @@
+controllerManager:
+  #
+  # Object Count Quotas (Native & Extended Resources)
+  #
+  # You can specify object count quotas for native and extended Kubernetes resources using the 'hard' field in the ClusterResourceQuota spec.
+  #
+  # Example configuration for all supported object count resources:
+  #
+  # hard:
+  #   pods: "10"                                 # Pod count
+  #   services: "5"                              # Service count
+  #   services.loadbalancers: "2"                # Service type=LoadBalancer count
+  #   services.nodeports: "3"                    # Service type=NodePort count
+  #   configmaps: "20"                           # ConfigMap count
+  #   secrets: "15"                              # Secret count
+  #   persistentvolumeclaims: "8"                # PVC count
+  #   replicationcontrollers: "4"                # ReplicationController count
+  #   deployments.apps: "6"                      # Deployment count
+  #   statefulsets.apps: "2"                     # StatefulSet count
+  #   daemonsets.apps: "2"                       # DaemonSet count
+  #   jobs.batch: "5"                            # Job count
+  #   cronjobs.batch: "3"                        # CronJob count
+  #   horizontalpodautoscalers.autoscaling: "2"  # HPA count
+  #   ingresses.networking.k8s.io: "3"           # Ingress count
+  #
+  # Subtype quotas (e.g., services.loadbalancers) cannot exceed the total for the parent resource (e.g., services).
+  #
+  # Custom CRDs are not supported for object count quotas.
+  # imagePullSecrets:
+  #   - name: ghcr-creds
+  replicas: 1
+  # The label key used to exclude namespaces from reconciliation.
+  # Namespaces with this label (set to any value) will be ignored by the controller.
+  excludeNamespaceLabelKey: "pac-quota-controller.powerapp.cloud/exclude"
+  container:
+    image:
+      repository: ghcr.io/powerhome/pac-quota-controller
+      tag: latest
+      pullPolicy: IfNotPresent
+    args:
+      - "--leader-elect"
+    webhookCertPath: "/tmp/k8s-webhook-server/serving-certs"
+    resources:
+      limits:
+        cpu: 500m
+        memory: 128Mi
+      requests:
+        cpu: 10m
+        memory: 64Mi
+    livenessProbe:
+      initialDelaySeconds: 15
+      periodSeconds: 20
+      httpGet:
+        path: /healthz
+        port: 9443
+        scheme: HTTPS
+    readinessProbe:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      httpGet:
+        path: /readyz
+        port: 9443
+        scheme: HTTPS
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - "ALL"
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  # The webhook server's graceful shutdown gives in-flight admissions up to 30s
+  # to drain (see pkg/webhook/server/server.go:shutdown). Setting the grace
+  # period below that would SIGKILL the pod mid-drain.
+  terminationGracePeriodSeconds: 35
+  serviceAccount:
+    name: pac-quota-controller-manager
+    annotations: {}
+
+rbac:
+  enable: true
+
+events:
+  # Configuration for Kubernetes Events recording
+  enable: true
+  # Event cleanup configuration
+  cleanup:
+    # Time-to-live for events (default: 24h)
+    ttl: "24h"
+    # Maximum number of events to retain per ClusterResourceQuota (default: 100)
+    maxEventsPerCRQ: 100
+    # Cleanup interval (default: 1h)
+    interval: "1h"
+  # Event recording configuration
+  recording:
+    # Component name for controller events (default: pac-quota-controller-controller)
+    controllerComponent: "pac-quota-controller-controller"
+    # Component name for webhook events (default: pac-quota-controller-webhook)
+    webhookComponent: "pac-quota-controller-webhook"
+    # Exponential backoff configuration for quota violation events
+    backoff:
+      # Base interval for first event (default: 30s)
+      baseInterval: "30s"
+      # Maximum interval between events (default: 15m)
+      maxInterval: "15m"
+
+metrics:
+  enable: true
+
+prometheus:
+  enable: false
+  serviceMonitor:
+    enable: false
+  alerting:
+    enable: false
+    rules:
+      reconcileErrors:
+        enable: true
+        threshold: 0
+        for: 5m
+      quotaBreach:
+        enable: true
+        for: 1m
+      # Leading indicator ahead of an actual breach: a CRQ resource over 95%
+      # for at least 24 of the last 168 hourly samples. Disabled by default —
+      # enable it, review what fires for about a week before it starts paging
+      # the owning team (it already routes via the CRQ's namespace).
+      resourcePressure:
+        enable: false
+        for: 15m
+      highLatency:
+        enable: true
+        threshold: 5
+        for: 10m
+      # Spike in webhook admission denials labelled reason=bad_request — this
+      # is a webhook implementation bug signal, distinct from working-as-intended
+      # reason=quota_exceeded denials.
+      webhookBadRequest:
+        enable: true
+        threshold: 0.1
+        for: 10m
+      # Fires when the events cleanup loop hasn't deleted anything in `window`.
+      # Disabled by default because some clusters legitimately have nothing to
+      # clean; enable on clusters where events are emitted continuously.
+      eventsCleanupStalled:
+        enable: false
+        window: 6h
+        for: 30m
+
+certmanager:
+  # If true, the chart will create Certificate resources for cert-manager to issue certificates for webhooks and metrics.
+  # If false, you must provide your own certificates via webhook.customTLS.secretName and metrics.customTLS.secretName.
+  enable: true
+  # The installation of cert-manager itself is no longer handled by this chart.
+  # Please install cert-manager separately in your cluster. See README for details.
+
+webhook:
+  enable: true
+  dryRunOnly: false
+
+excludedNamespaces:
+  - kube-system
