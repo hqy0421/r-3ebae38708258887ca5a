@@ -69,6 +69,37 @@ spec:
     ingresses.networking.k8s.io: "3"           # Ingress count
 ```
 
+### Shared Storage Class Groups
+
+Two storage classes often share one physical backing store. `spec.storageClassGroups` lets you keep per-class limits while also capping their combined usage. A PVC consumes both its own class's budget and its group's budget, and is denied when either would be exceeded. Classes not listed in any group keep the classic per-class-only behavior.
+
+Group limits use these `hard` keys:
+
+- `<group>.storageclassgroup.storage.k8s.io/requests.storage` — combined storage requested by PVCs of every class in the group
+- `<group>.storageclassgroup.storage.k8s.io/persistentvolumeclaims` — combined PVC count of every class in the group
+
+A storage class may belong to at most one group within a quota.
+
+#### Example
+
+```yaml
+spec:
+  storageClassGroups:
+    - name: shared-ssd
+      storageClasses: [fast-ssd, premium-ssd]
+  hard:
+    # Combined budget for the shared array
+    shared-ssd.storageclassgroup.storage.k8s.io/requests.storage: 200Gi
+    shared-ssd.storageclassgroup.storage.k8s.io/persistentvolumeclaims: "50"
+    # Per-class budgets, unchanged
+    fast-ssd.storageclass.storage.k8s.io/requests.storage: 120Gi
+    fast-ssd.storageclass.storage.k8s.io/persistentvolumeclaims: "40"
+    premium-ssd.storageclass.storage.k8s.io/requests.storage: 120Gi
+    premium-ssd.storageclass.storage.k8s.io/persistentvolumeclaims: "40"
+```
+
+See the [Storage Class Groups documentation](https://github.com/powerhome/pac-quota-controller/blob/main/docs/storage-class-groups.md) for admission and reconciliation details.
+
 ### Container Images
 
 This chart can use container images from GitHub Container Registry:

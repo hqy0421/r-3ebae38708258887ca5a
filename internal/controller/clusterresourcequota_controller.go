@@ -351,6 +351,7 @@ func (r *ClusterResourceQuotaReconciler) calculateAndAggregateUsage(
 		var pvcsByClass map[string][]corev1.PersistentVolumeClaim
 		if kinds.storageClasses {
 			pvcsByClass = bucketPVCsByStorageClass(pvcs)
+			storage.AddStorageClassGroupBuckets(pvcsByClass, crq.Spec.StorageClassGroups)
 		}
 
 		for resourceName := range crq.Spec.Hard {
@@ -377,8 +378,9 @@ func (r *ClusterResourceQuotaReconciler) calculateAndAggregateUsage(
 }
 
 // namespaceKinds enumerates the kinds of namespaced resources a CRQ requires
-// listing. storageClasses is true when any *.storageclass.storage.k8s.io/* key
-// is present, so the controller knows to bucket PVCs by class once per namespace.
+// listing. storageClasses is true when any per-class or per-group
+// *.storage*resource* key is present, so the controller knows to bucket PVCs
+// by class once per namespace.
 type namespaceKinds struct {
 	pods           bool
 	services       bool
@@ -401,6 +403,9 @@ func (r *ClusterResourceQuotaReconciler) classifyKindsNeeded(hard quotav1alpha1.
 			k.pods = true
 		case strings.HasSuffix(resourceStr, ".storageclass.storage.k8s.io/requests.storage"),
 			strings.HasSuffix(resourceStr, ".storageclass.storage.k8s.io/persistentvolumeclaims"):
+			k.pvcs = true
+			k.storageClasses = true
+		case storage.IsStorageClassGroupResource(resourceName):
 			k.pvcs = true
 			k.storageClasses = true
 		}
@@ -491,6 +496,13 @@ func (r *ClusterResourceQuotaReconciler) computeNamespaceResourceUsage(
 	if class, ok := strings.CutSuffix(resourceStr, ".storageclass.storage.k8s.io/persistentvolumeclaims"); ok {
 		return *resource.NewQuantity(int64(len(pvcsByClass[class])), resource.DecimalSI), nil
 	}
+	if group, base, ok := storage.ParseStorageClassGroupResource(resourceName); ok {
+		groupPVCs := pvcsByClass[storage.StorageClassGroupBucketKey(group)]
+		if base == corev1.ResourcePersistentVolumeClaims {
+			return *resource.NewQuantity(int64(len(groupPVCs)), resource.DecimalSI), nil
+		}
+		return storage.CalculateStorageUsageFromPVCs(groupPVCs, corev1.ResourceRequestsStorage), nil
+	}
 
 	if r.isComputeResource(resourceName) {
 		return pod.CalculateUsageFromPods(pods, resourceName), nil
@@ -511,6 +523,9 @@ func (r *ClusterResourceQuotaReconciler) aggregationStepForResource(resourceName
 	case usage.ResourceServices, usage.ResourceServicesLoadBalancers, usage.ResourceServicesNodePorts:
 		return "services"
 	default:
+		if storage.IsStorageClassGroupResource(resourceName) {
+			return "storage"
+		}
 		if r.isComputeResource(resourceName) {
 			return "compute_extended"
 		}

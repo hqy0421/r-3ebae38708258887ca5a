@@ -1241,6 +1241,15 @@ var _ = Describe("ClusterResourceQuota Controller", Ordered, func() {
 			Expect(kinds.pods).To(BeFalse())
 		})
 
+		It("marks storage-class group resources as needing pvcs and bucketing", func() {
+			kinds := r.classifyKindsNeeded(quotav1alpha1.ResourceList{
+				corev1.ResourceName("shared.storageclassgroup.storage.k8s.io/persistentvolumeclaims"): resource.MustParse("10"),
+			})
+			Expect(kinds.pvcs).To(BeTrue())
+			Expect(kinds.storageClasses).To(BeTrue())
+			Expect(kinds.pods).To(BeFalse())
+		})
+
 		It("flags no list kinds when only object-count resources are tracked", func() {
 			kinds := r.classifyKindsNeeded(quotav1alpha1.ResourceList{
 				usage.ResourceConfigMaps: resource.MustParse("10"),
@@ -1559,6 +1568,64 @@ var _ = Describe("ClusterResourceQuota Controller", Ordered, func() {
 			Expect(byNS).To(HaveLen(1))
 			q := total[corev1.ResourceRequestsCPU]
 			Expect(q.IsZero()).To(BeTrue())
+		})
+
+		It("aggregates a storage class group from the volumes stored in its member classes", func() {
+			fastClass := "fast-ssd"
+			premiumClass := "fast-nvme"
+			slowClass := "slow-hdd"
+			mkPVC := func(name, class, size string) *corev1.PersistentVolumeClaim {
+				c := class
+				return &corev1.PersistentVolumeClaim{
+					ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns-a"},
+					Spec: corev1.PersistentVolumeClaimSpec{
+						StorageClassName: &c,
+						Resources: corev1.VolumeResourceRequirements{
+							Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(size)},
+						},
+					},
+				}
+			}
+
+			fakeClient := fake.NewClientBuilder().WithObjects(
+				mkPVC("p-fast", fastClass, "1Gi"),
+				mkPVC("p-premium", premiumClass, "2Gi"),
+				// An ungrouped class must not count toward any group's usage.
+				mkPVC("p-slow", slowClass, "8Gi"),
+			).Build()
+
+			r := &ClusterResourceQuotaReconciler{Client: fakeClient, logger: zap.NewNop()}
+			groupStorage := storage.StorageClassGroupStorageResource("shared-ssd")
+			groupCount := storage.StorageClassGroupPVCCountResource("shared-ssd")
+			fastStorage := corev1.ResourceName("fast-ssd.storageclass.storage.k8s.io/requests.storage")
+			crq := &quotav1alpha1.ClusterResourceQuota{
+				ObjectMeta: metav1.ObjectMeta{Name: "grouped"},
+				Spec: quotav1alpha1.ClusterResourceQuotaSpec{
+					StorageClassGroups: []quotav1alpha1.StorageClassGroup{{
+						Name:           "shared-ssd",
+						StorageClasses: []string{fastClass, premiumClass},
+					}},
+					Hard: quotav1alpha1.ResourceList{
+						groupStorage: resource.MustParse("100Gi"),
+						groupCount:   resource.MustParse("10"),
+						fastStorage:  resource.MustParse("100Gi"),
+					},
+				},
+			}
+
+			total, byNS, err := r.calculateAndAggregateUsage(ctx, crq, []string{"ns-a"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(byNS).To(HaveLen(1))
+
+			groupStorageUsage := total[groupStorage]
+			groupCountUsage := total[groupCount]
+			fastStorageUsage := total[fastStorage]
+			perNSGroupStorage := byNS[0].Status.Used[groupStorage]
+			Expect(groupStorageUsage.String()).To(Equal("3Gi"))
+			Expect(groupCountUsage.String()).To(Equal("2"))
+			// Per-class usage is unchanged and excludes the other group member.
+			Expect(fastStorageUsage.String()).To(Equal("1Gi"))
+			Expect(perNSGroupStorage.String()).To(Equal("3Gi"))
 		})
 	})
 

@@ -109,6 +109,11 @@ spec:
                   'ingresses.networking.k8s.io': '3' (Ingress count)
 
                   ...and so on for all supported native and extended resource types.
+
+                  Storage class groups add combined limits for a set of storage classes (see
+                  StorageClassGroups). Their limits use the keys
+                  '<group>.storageclassgroup.storage.k8s.io/requests.storage' and
+                  '<group>.storageclassgroup.storage.k8s.io/persistentvolumeclaims'.
                 type: object
               namespaceSelector:
                 description: |-
@@ -250,6 +255,43 @@ spec:
                   rule: '!(''BestEffort'' in self && ''NotBestEffort'' in self)'
                 - message: Terminating and NotTerminating scopes are mutually exclusive
                   rule: '!(''Terminating'' in self && ''NotTerminating'' in self)'
+              storageClassGroups:
+                description: |-
+                  StorageClassGroups assigns storage classes to shared groups. A volume
+                  consumes both its own storage class's budget (if the quota sets per-class
+                  limits) and its group's combined budget, and the request is denied when
+                  either is exhausted. Storage classes absent from every group keep the
+                  classic per-class-only behavior. A storage class may belong to at most one
+                  group per quota.
+                items:
+                  description: |-
+                    StorageClassGroup declares a shared budget for a set of storage classes.
+                    Every storage class in the group keeps its own per-class limits (if any) in
+                    Hard, and additionally draws from the group's combined limits, which use the
+                    resource names '<name>.storageclassgroup.storage.k8s.io/requests.storage' and
+                    '<name>.storageclassgroup.storage.k8s.io/persistentvolumeclaims' in Hard.
+                    A storage class may belong to at most one group within the same quota.
+                  properties:
+                    name:
+                      description: |-
+                        Name is the group name. Group-level limits in Hard are keyed by this name,
+                        so it must be a valid DNS-1123 subdomain (lowercase alphanumerics, '-' and '.').
+                      maxLength: 200
+                      pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                      type: string
+                    storageClasses:
+                      description: |-
+                        StorageClasses lists the storage classes that share this group's budget.
+                        A class not listed in any group keeps the classic per-class behavior.
+                      items:
+                        type: string
+                      minItems: 1
+                      type: array
+                  required:
+                  - name
+                  - storageClasses
+                  type: object
+                type: array
             required:
             - namespaceSelector
             type: object

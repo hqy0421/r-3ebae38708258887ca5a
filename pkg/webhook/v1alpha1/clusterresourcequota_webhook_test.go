@@ -22,6 +22,7 @@ import (
 
 	quotav1alpha1 "github.com/powerhome/pac-quota-controller/api/v1alpha1"
 	"github.com/powerhome/pac-quota-controller/pkg/kubernetes/quota"
+	"github.com/powerhome/pac-quota-controller/pkg/kubernetes/storage"
 	pkglogger "github.com/powerhome/pac-quota-controller/pkg/logger"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -138,6 +139,41 @@ var _ = Describe("ClusterResourceQuotaWebhook", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(warnings).To(HaveLen(1))
 			Expect(warnings[0]).To(ContainSubstring("match no pods"))
+		})
+		It("should reject a storage class listed in two groups", func() {
+			crq := &quotav1alpha1.ClusterResourceQuota{
+				ObjectMeta: metav1.ObjectMeta{Name: "grouped-crq"},
+				Spec: quotav1alpha1.ClusterResourceQuotaSpec{
+					Hard: quotav1alpha1.ResourceList{"pods": resource.MustParse("5")},
+					StorageClassGroups: []quotav1alpha1.StorageClassGroup{
+						{Name: "a", StorageClasses: []string{"fast-ssd"}},
+						{Name: "b", StorageClasses: []string{"fast-ssd"}},
+					},
+					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"a": "b"}},
+				},
+			}
+
+			_, err := webhook.validateOperation(ctx, crq)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("belongs to multiple groups"))
+		})
+
+		It("should accept disjoint storage class groups with matching hard keys", func() {
+			crq := &quotav1alpha1.ClusterResourceQuota{
+				ObjectMeta: metav1.ObjectMeta{Name: "grouped-crq"},
+				Spec: quotav1alpha1.ClusterResourceQuotaSpec{
+					Hard: quotav1alpha1.ResourceList{
+						storage.StorageClassGroupStorageResource("shared-ssd"): resource.MustParse("100Gi"),
+					},
+					StorageClassGroups: []quotav1alpha1.StorageClassGroup{
+						{Name: "shared-ssd", StorageClasses: []string{"fast-ssd", "premium-ssd"}},
+					},
+					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"a": "b"}},
+				},
+			}
+
+			_, err := webhook.validateOperation(ctx, crq)
+			Expect(err).ToNot(HaveOccurred())
 		})
 	})
 

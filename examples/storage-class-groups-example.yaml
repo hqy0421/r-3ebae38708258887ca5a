@@ -1,0 +1,59 @@
+# Storage class group example.
+# Two storage classes share one physical array. Per-class limits keep one class
+# from starving the other; the group limit caps them together. A PVC is charged
+# against both its class budget and its group budget, and is denied when either
+# would be exceeded.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shared-storage-demo
+  labels:
+    quota-example: storage-groups
+---
+apiVersion: quota.powerapp.cloud/v1alpha1
+kind: ClusterResourceQuota
+metadata:
+  name: shared-storage-quota
+spec:
+  namespaceSelector:
+    matchLabels:
+      quota-example: storage-groups
+  storageClassGroups:
+    - name: shared-ssd
+      storageClasses: [fast-ssd, premium-ssd]
+  hard:
+    # Combined budget for the shared array: 200Gi across both classes.
+    shared-ssd.storageclassgroup.storage.k8s.io/requests.storage: 200Gi
+    shared-ssd.storageclassgroup.storage.k8s.io/persistentvolumeclaims: "50"
+    # Per-class budgets, as before.
+    fast-ssd.storageclass.storage.k8s.io/requests.storage: 120Gi
+    fast-ssd.storageclass.storage.k8s.io/persistentvolumeclaims: "40"
+    premium-ssd.storageclass.storage.k8s.io/requests.storage: 120Gi
+    premium-ssd.storageclass.storage.k8s.io/persistentvolumeclaims: "40"
+---
+# A class outside any group keeps the classic per-class-only behavior.
+apiVersion: quota.powerapp.cloud/v1alpha1
+kind: ClusterResourceQuota
+metadata:
+  name: ungrouped-storage-quota
+spec:
+  namespaceSelector:
+    matchLabels:
+      quota-example: storage-groups
+  hard:
+    archive-hdd.storageclass.storage.k8s.io/requests.storage: 500Gi
+    archive-hdd.storageclass.storage.k8s.io/persistentvolumeclaims: "100"
+---
+# Charged against premium-ssd and against shared-ssd (combined).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-storage-demo-pvc
+  namespace: shared-storage-demo
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: premium-ssd
+  resources:
+    requests:
+      storage: 10Gi

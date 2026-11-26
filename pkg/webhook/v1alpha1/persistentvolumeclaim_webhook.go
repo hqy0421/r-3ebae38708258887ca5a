@@ -101,26 +101,47 @@ func (h *PersistentVolumeClaimWebhook) validateOperation(
 	checks := []check{
 		{usage.ResourceRequestsStorage, storageDelta, "ClusterResourceQuota storage validation failed: %w"},
 	}
-	if pvc.Spec.StorageClassName != nil && *pvc.Spec.StorageClassName != "" {
-		storageClass := *pvc.Spec.StorageClassName
+
+	// A PVC that belongs to a storage-class group is charged against both its
+	// own class budget and the group's combined budget; the request is denied
+	// if either would be exceeded. Resolve the class the same way reconciliation
+	// does (including the deprecated beta annotation) so both layers agree.
+	storageClass := storage.PVCStorageClass(pvc)
+	var group string
+	if storageClass != "" {
 		checks = append(checks, check{
 			corev1.ResourceName(fmt.Sprintf("%s.storageclass.storage.k8s.io/requests.storage", storageClass)),
 			storageDelta,
 			fmt.Sprintf("ClusterResourceQuota storage class '%s' storage validation failed: %%w", storageClass),
 		})
+		group, _ = storage.StorageClassGroupForClass(crq.Spec.StorageClassGroups, storageClass)
+		if group != "" {
+			checks = append(checks, check{
+				storage.StorageClassGroupStorageResource(group),
+				storageDelta,
+				fmt.Sprintf("ClusterResourceQuota storage class group '%s' storage validation failed: %%w", group),
+			})
+		}
 	}
+
 	// Count checks only apply on Create; Update never adds or removes a PVC.
 	if oldPVC == nil {
 		checks = append(checks, check{
 			usage.ResourcePersistentVolumeClaims, oneQuantity,
 			"ClusterResourceQuota PVC count validation failed: %w",
 		})
-		if pvc.Spec.StorageClassName != nil && *pvc.Spec.StorageClassName != "" {
-			storageClass := *pvc.Spec.StorageClassName
+		if storageClass != "" {
 			checks = append(checks, check{
 				corev1.ResourceName(fmt.Sprintf("%s.storageclass.storage.k8s.io/persistentvolumeclaims", storageClass)),
 				oneQuantity,
 				fmt.Sprintf("ClusterResourceQuota storage class '%s' PVC count validation failed: %%w", storageClass),
+			})
+		}
+		if group != "" {
+			checks = append(checks, check{
+				storage.StorageClassGroupPVCCountResource(group),
+				oneQuantity,
+				fmt.Sprintf("ClusterResourceQuota storage class group '%s' PVC count validation failed: %%w", group),
 			})
 		}
 	}

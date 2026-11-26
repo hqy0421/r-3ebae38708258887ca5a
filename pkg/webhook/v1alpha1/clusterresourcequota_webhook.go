@@ -88,6 +88,10 @@ func (h *ClusterResourceQuotaWebhook) validateOperation(
 		return warnings, err
 	}
 
+	if err := quota.ValidateStorageClassGroups(crq); err != nil {
+		return warnings, err
+	}
+
 	validator := namespace.NewNamespaceValidator(h.client, h.crqClient)
 	if err := validator.ValidateCRQNamespaceConflicts(ctx, crq); err != nil {
 		return warnings, err

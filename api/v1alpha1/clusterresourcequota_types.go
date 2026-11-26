@@ -42,6 +42,27 @@ const (
 	EnforcementModeReportOnly EnforcementMode = "ReportOnly"
 )
 
+// StorageClassGroup declares a shared budget for a set of storage classes.
+// Every storage class in the group keeps its own per-class limits (if any) in
+// Hard, and additionally draws from the group's combined limits, which use the
+// resource names '<name>.storageclassgroup.storage.k8s.io/requests.storage' and
+// '<name>.storageclassgroup.storage.k8s.io/persistentvolumeclaims' in Hard.
+// A storage class may belong to at most one group within the same quota.
+type StorageClassGroup struct {
+	// Name is the group name. Group-level limits in Hard are keyed by this name,
+	// so it must be a valid DNS-1123 subdomain (lowercase alphanumerics, '-' and '.').
+	// +required
+	// +kubebuilder:validation:MaxLength=200
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// StorageClasses lists the storage classes that share this group's budget.
+	// A class not listed in any group keeps the classic per-class behavior.
+	// +required
+	// +kubebuilder:validation:MinItems=1
+	StorageClasses []string `json:"storageClasses"`
+}
+
 // ClusterResourceQuotaSpec defines the desired state of ClusterResourceQuota.
 type ClusterResourceQuotaSpec struct {
 	// Hard is the set of desired hard limits for each named resource.
@@ -63,8 +84,22 @@ type ClusterResourceQuotaSpec struct {
 	// 'ingresses.networking.k8s.io': '3' (Ingress count)
 	//
 	// ...and so on for all supported native and extended resource types.
+	//
+	// Storage class groups add combined limits for a set of storage classes (see
+	// StorageClassGroups). Their limits use the keys
+	// '<group>.storageclassgroup.storage.k8s.io/requests.storage' and
+	// '<group>.storageclassgroup.storage.k8s.io/persistentvolumeclaims'.
 	// +optional
 	Hard ResourceList `json:"hard,omitempty"`
+
+	// StorageClassGroups assigns storage classes to shared groups. A volume
+	// consumes both its own storage class's budget (if the quota sets per-class
+	// limits) and its group's combined budget, and the request is denied when
+	// either is exhausted. Storage classes absent from every group keep the
+	// classic per-class-only behavior. A storage class may belong to at most one
+	// group per quota.
+	// +optional
+	StorageClassGroups []StorageClassGroup `json:"storageClassGroups,omitempty"`
 
 	// NamespaceSelector selects the namespaces to which this quota applies.
 	// This is specific to ClusterResourceQuota and allows quota limits to span across

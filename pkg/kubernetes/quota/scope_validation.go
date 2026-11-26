@@ -8,6 +8,7 @@ import (
 
 	quotav1alpha1 "github.com/powerhome/pac-quota-controller/api/v1alpha1"
 	"github.com/powerhome/pac-quota-controller/pkg/kubernetes/pod"
+	"github.com/powerhome/pac-quota-controller/pkg/kubernetes/storage"
 	"github.com/powerhome/pac-quota-controller/pkg/kubernetes/usage"
 )
 
@@ -28,7 +29,8 @@ func isStandardQuotaResource(name corev1.ResourceName) bool {
 		usage.ObjectCountResources[name] ||
 		name == usage.ResourceRequestsEphemeralStorage ||
 		name == usage.ResourceLimitsEphemeralStorage ||
-		strings.Contains(string(name), ".storageclass.storage.k8s.io/")
+		strings.Contains(string(name), ".storageclass.storage.k8s.io/") ||
+		storage.IsStorageClassGroupResource(name)
 }
 
 func scopeAllowsResource(scope corev1.ResourceQuotaScope, name corev1.ResourceName) bool {
